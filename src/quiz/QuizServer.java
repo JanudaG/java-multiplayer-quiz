@@ -3,176 +3,456 @@ package quiz;
 
 import java.io.*;
 import java.net.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 public class QuizServer {
 
     private static final int PORT = 5000;
-    private static final Object LOCK = new Object();
+    private static final int QUESTION_SECONDS = 15;
+    private static final int POINTS_PER_CORRECT = 10;
 
-    private static final Map<String, PrintWriter> players =
+    // Question bank
+    private static final List<Question> QUESTIONS = List.of(
+        new Question(
+            "Which Java class listens for TCP connections?",
+            "Socket", "ServerSocket", "DatagramSocket", "Thread", "B"),
+
+        new Question(
+            "Which protocol provides reliable, ordered delivery?",
+            "UDP", "HTTP", "TCP", "ICMP", "C"),
+
+        new Question(
+            "What does an IP address identify on a network?",
+            "A network interface", "A Java method",
+            "A file format", "A password", "A"),
+
+        new Question(
+            "Which Java method accepts an incoming client?",
+            "connect()", "read()", "listen()", "accept()", "D"),
+
+        new Question(
+            "Which Java feature allows clients to be handled concurrently?",
+            "Threads", "Packages", "Comments", "Imports", "A")
+    );
+
+    // Shared multiplayer state
+    private final Object lock = new Object();
+
+    private final Map<String, ClientHandler> players =
             new LinkedHashMap<>();
 
-    private static boolean gameStarted = false;
+    private final Map<String, Integer> scores = new HashMap<>();
+    private final Set<String> answered = new HashSet<>();
+
+    // Server-side timer
+    private final ScheduledExecutorService scheduler =
+            Executors.newSingleThreadScheduledExecutor();
+
+    private boolean gameStarted = false;
+    private boolean roundOpen = false;
+    private int questionIndex = -1;
+    private int sessionId = 0;
+    private long deadlineNanos;
+
+    private ScheduledFuture<?> roundTimer;
 
     public static void main(String[] args) {
+        new QuizServer().run();
+    }
+
+    private void run() {
 
         try (ServerSocket server = new ServerSocket(PORT)) {
 
-            System.out.println("Quiz server running on port " + PORT);
+            System.out.println(
+                    "Quiz server listening on port " + PORT);
 
             while (true) {
                 Socket socket = server.accept();
 
-                new Thread(() -> handleClient(socket)).start();
+                new Thread(new ClientHandler(socket)).start();
             }
 
         } catch (IOException e) {
-            System.err.println("Server error: " + e.getMessage());
-        }
-    }
-
-    private static void handleClient(Socket socket) {
-
-        String username = null;
-
-        try (socket;
-             BufferedReader input = new BufferedReader(
-                     new InputStreamReader(socket.getInputStream()));
-             PrintWriter output = new PrintWriter(
-                     socket.getOutputStream(), true)) {
-
-            String join = input.readLine();
-
-            if (join == null || !join.startsWith("JOIN|")) {
-                output.println("ERROR|First message must be JOIN|username");
-                return;
-            }
-
-            String requestedName = join.substring(5).trim();
-
-            if (!requestedName.matches("[A-Za-z0-9_-]{1,16}")) {
-                output.println(
-                        "ERROR|Username must be 1-16 letters, digits, _ or -");
-                return;
-            }
-
-            synchronized (LOCK) {
-
-                if (gameStarted) {
-                    output.println("ERROR|A game has already started");
-                    return;
-                }
-
-                if (players.containsKey(requestedName)) {
-                    output.println("ERROR|Username already in use");
-                    return;
-                }
-
-                players.put(requestedName, output);
-                username = requestedName;
-            }
-
-            System.out.println(username + " joined");
-
-            broadcast("INFO|" + username + " joined the lobby");
-            broadcastLobby();
-
-            String command;
-
-            while ((command = input.readLine()) != null) {
-
-                if (command.equals("QUIT")) {
-                    break;
-                }
-
-                if (command.equals("START")) {
-                    tryStart(username, output);
-                } else {
-                    output.println("ERROR|Unknown command");
-                }
-            }
-
-        } catch (IOException e) {
-            System.out.println("Connection lost: " + e.getMessage());
+            System.err.println(
+                    "Server error: " + e.getMessage());
 
         } finally {
+            scheduler.shutdownNow();
+        }
+    }
 
-            if (username != null) {
-                boolean removed;
+    // Each connected client has a handler thread
+    private final class ClientHandler implements Runnable {
 
-                synchronized (LOCK) {
-                    removed = players.remove(username) != null;
+        private final Socket socket;
+        private PrintWriter output;
+        private String username;
+
+        private ClientHandler(Socket socket) {
+            this.socket = socket;
+        }
+
+        private void send(String message) {
+            output.println(message);
+        }
+
+        @Override
+        public void run() {
+
+            try (socket;
+                 BufferedReader input = new BufferedReader(
+                     new InputStreamReader(
+                         socket.getInputStream(),
+                         StandardCharsets.UTF_8));
+                 PrintWriter writer = new PrintWriter(
+                     new OutputStreamWriter(
+                         socket.getOutputStream(),
+                         StandardCharsets.UTF_8), true)) {
+
+                output = writer;
+
+                String joinMessage = input.readLine();
+
+                if (joinMessage == null
+                        || !joinMessage.startsWith("JOIN|")) {
+                    send("ERROR|First message must be JOIN|username");
+                    return;
                 }
 
-                if (removed) {
-                    System.out.println(username + " left");
+                String requested =
+                        joinMessage.substring(5).trim();
 
-                    broadcast("INFO|" + username + " left the lobby");
-                    broadcastLobby();
+                if (!requested.matches("[A-Za-z0-9_-]{1,16}")) {
+                    send("ERROR|Use a username of 1-16 letters, digits, _ or -");
+                    return;
+                }
+
+                synchronized (lock) {
+
+                    if (gameStarted) {
+                        send("ERROR|Game already running; join after it finishes");
+                        return;
+                    }
+
+                    if (players.containsKey(requested)) {
+                        send("ERROR|Username already taken");
+                        return;
+                    }
+
+                    username = requested;
+
+                    players.put(username, this);
+                    scores.put(username, 0);
+
+                    send("JOINED|" + username);
+
+                    broadcastLocked(
+                            "INFO|" + username + " joined the lobby");
+
+                    broadcastLobbyLocked();
+                }
+
+                String command;
+
+                while ((command = input.readLine()) != null) {
+
+                    if (command.equals("QUIT")) {
+                        break;
+                    }
+
+                    if (command.equals("START")) {
+                        startGame(this);
+
+                    } else if (command.startsWith("ANSWER|")) {
+                        acceptAnswer(this, command);
+
+                    } else {
+                        synchronized (lock) {
+                            send("ERROR|Unknown command");
+                        }
+                    }
+                }
+
+            } catch (IOException e) {
+                System.out.println(
+                        "Connection closed: " + e.getMessage());
+
+            } finally {
+
+                synchronized (lock) {
+
+                    if (username != null
+                            && players.get(username) == this) {
+
+                        players.remove(username);
+                        scores.remove(username);
+                        answered.remove(username);
+
+                        System.out.println(username + " disconnected");
+
+                        broadcastLocked(
+                                "INFO|" + username + " left the lobby");
+
+                        broadcastLobbyLocked();
+
+                        if (gameStarted && players.size() < 2) {
+
+                            if (roundTimer != null) {
+                                roundTimer.cancel(false);
+                            }
+
+                            roundOpen = false;
+
+                            broadcastLocked(
+                                    "INFO|Match ended: not enough players");
+
+                            finishGameLocked();
+
+                        } else if (roundOpen
+                                && answered.size() == players.size()) {
+
+                            closeRoundLocked();
+                        }
+                    }
                 }
             }
         }
     }
 
-    private static void tryStart(
-            String username, PrintWriter output) {
+    // Only the host may start a game
+    private void startGame(ClientHandler sender) {
 
-        synchronized (LOCK) {
+        synchronized (lock) {
 
-            String host = players.keySet().iterator().next();
+            if (gameStarted) {
+                sender.send("ERROR|Game already running");
+                return;
+            }
 
-            if (!host.equals(username)) {
-                output.println("ERROR|Only the host can start the game");
+            if (players.isEmpty()
+                    || players.values().iterator().next() != sender) {
+
+                sender.send("ERROR|Only the host can start");
                 return;
             }
 
             if (players.size() < 2) {
-                output.println("ERROR|At least two players are required");
-                return;
-            }
-
-            if (gameStarted) {
-                output.println("ERROR|Game already started");
+                sender.send("ERROR|At least two players are required");
                 return;
             }
 
             gameStarted = true;
-        }
+            questionIndex = -1;
+            sessionId++;
 
-        broadcast("GAME_STARTED|The host started the game!");
-    }
+            scores.replaceAll((name, oldScore) -> 0);
 
-    private static void broadcast(String message) {
+            broadcastLocked(
+                    "GAME_STARTED|" + QUESTIONS.size() + " questions");
 
-        List<PrintWriter> recipients;
-
-        synchronized (LOCK) {
-            recipients = new ArrayList<>(players.values());
-        }
-
-        for (PrintWriter writer : recipients) {
-            writer.println(message);
+            beginNextRoundLocked();
         }
     }
 
-    private static void broadcastLobby() {
+    // Broadcast the next question
+    private void beginNextRoundLocked() {
 
-        String names;
-        String host;
+        questionIndex++;
+        answered.clear();
+        roundOpen = true;
 
-        synchronized (LOCK) {
+        int round = questionIndex + 1;
+        int currentSession = sessionId;
 
-            if (players.isEmpty()) {
+        deadlineNanos = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(QUESTION_SECONDS);
+
+        broadcastLocked(
+                QUESTIONS.get(questionIndex).toMessage(
+                        round, QUESTIONS.size(), QUESTION_SECONDS));
+
+        roundTimer = scheduler.schedule(() -> {
+
+            synchronized (lock) {
+
+                if (gameStarted && roundOpen
+                        && sessionId == currentSession
+                        && questionIndex + 1 == round) {
+
+                    closeRoundLocked();
+                }
+            }
+
+        }, QUESTION_SECONDS, TimeUnit.SECONDS);
+    }
+
+    // Validate and score an answer
+    private void acceptAnswer(
+            ClientHandler sender, String command) {
+
+        String[] parts = command.split("\\|", -1);
+
+        synchronized (lock) {
+
+            if (!gameStarted || !roundOpen
+                    || System.nanoTime() >= deadlineNanos) {
+
+                sender.send(
+                        "ERROR|No active question or time has expired");
                 return;
             }
 
-            names = String.join(",", players.keySet());
-            host = players.keySet().iterator().next();
+            if (parts.length != 3
+                    || !parts[1].equals(
+                        String.valueOf(questionIndex + 1))
+                    || !parts[2].matches("[ABCD]")) {
+
+                sender.send(
+                        "ERROR|Send ANSWER|round|A, B, C or D");
+                return;
+            }
+
+            if (!answered.add(sender.username)) {
+                sender.send(
+                        "ERROR|You already answered this round");
+                return;
+            }
+
+            Question question = QUESTIONS.get(questionIndex);
+
+            if (parts[2].equals(question.correctAnswer())) {
+
+                scores.merge(
+                        sender.username,
+                        POINTS_PER_CORRECT,
+                        Integer::sum);
+            }
+
+            sender.send(
+                    "ANSWER_ACCEPTED|" + (questionIndex + 1));
+
+            // Finish early if everyone has answered
+            if (answered.size() == players.size()) {
+                closeRoundLocked();
+            }
+        }
+    }
+
+    // Finish the current question
+    private void closeRoundLocked() {
+
+        if (!roundOpen) {
+            return;
         }
 
-        broadcast("PLAYERS|" + names);
-        broadcast("HOST|" + host);
+        roundOpen = false;
+
+        if (roundTimer != null) {
+            roundTimer.cancel(false);
+        }
+
+        Question question = QUESTIONS.get(questionIndex);
+
+        broadcastLocked(
+                "ROUND_RESULT|" + (questionIndex + 1)
+                        + "|" + question.correctAnswer());
+
+        broadcastLocked(
+                "SCORES|" + scoresTextLocked());
+
+        // Check if this was the last question
+        if (questionIndex == QUESTIONS.size() - 1) {
+
+            finishGameLocked();
+
+        } else {
+
+            int finishedRound = questionIndex + 1;
+            int currentSession = sessionId;
+
+            // Give players 3 seconds to see the results
+            scheduler.schedule(() -> {
+
+                synchronized (lock) {
+
+                    if (gameStarted && !roundOpen
+                            && sessionId == currentSession
+                            && questionIndex + 1 == finishedRound) {
+
+                        beginNextRoundLocked();
+                    }
+                }
+
+            }, 3, TimeUnit.SECONDS);
+        }
+    }
+
+    // Calculate the winner
+    private void finishGameLocked() {
+
+        roundOpen = false;
+
+        if (roundTimer != null) {
+            roundTimer.cancel(false);
+        }
+
+        int best = scores.values().stream()
+                .mapToInt(Integer::intValue)
+                .max()
+                .orElse(0);
+
+        String winners = scores.entrySet().stream()
+                .filter(e -> e.getValue() == best)
+                .map(Map.Entry::getKey)
+                .sorted()
+                .collect(Collectors.joining(","));
+
+        broadcastLocked(
+                "SCORES|" + scoresTextLocked());
+
+        broadcastLocked(
+                "GAME_OVER|" + winners + "|" + best);
+
+        gameStarted = false;
+    }
+
+    // Prepare leaderboard sorted by score
+    private String scoresTextLocked() {
+
+        return scores.entrySet().stream()
+                .sorted(
+                    Comparator
+                        .<Map.Entry<String, Integer>>comparingInt(
+                            Map.Entry::getValue)
+                        .reversed()
+                        .thenComparing(Map.Entry::getKey))
+                .map(e -> e.getKey() + ":" + e.getValue())
+                .collect(Collectors.joining(","));
+    }
+
+    private void broadcastLobbyLocked() {
+
+        if (players.isEmpty()) {
+            return;
+        }
+
+        broadcastLocked(
+                "PLAYERS|" + String.join(",", players.keySet()));
+
+        broadcastLocked(
+                "HOST|" + players.keySet().iterator().next());
+    }
+
+    // Send a message to all connected players
+    private void broadcastLocked(String message) {
+
+        for (ClientHandler player : players.values()) {
+            player.send(message);
+        }
     }
 }
 
