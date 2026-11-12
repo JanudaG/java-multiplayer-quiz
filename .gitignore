@@ -2,6 +2,7 @@
 out/
 build/
 target/
+lib/
 .idea/
 *.iml
 .vscode/

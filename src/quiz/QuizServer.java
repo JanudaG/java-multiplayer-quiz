@@ -12,31 +12,10 @@ public class QuizServer {
 
     private static final int PORT = 5000;
     private static final int QUESTION_SECONDS = 15;
-    private static final int POINTS_PER_CORRECT = 10;
 
-    // Question bank
-    private static final List<Question> QUESTIONS = List.of(
-        new Question(
-            "Which Java class listens for TCP connections?",
-            "Socket", "ServerSocket", "DatagramSocket", "Thread", "B"),
-
-        new Question(
-            "Which protocol provides reliable, ordered delivery?",
-            "UDP", "HTTP", "TCP", "ICMP", "C"),
-
-        new Question(
-            "What does an IP address identify on a network?",
-            "A network interface", "A Java method",
-            "A file format", "A password", "A"),
-
-        new Question(
-            "Which Java method accepts an incoming client?",
-            "connect()", "read()", "listen()", "accept()", "D"),
-
-        new Question(
-            "Which Java feature allows clients to be handled concurrently?",
-            "Threads", "Packages", "Comments", "Imports", "A")
-    );
+    // Question bank (validated by QuestionBank)
+    private static final List<Question> QUESTIONS =
+            QuestionBank.defaultQuestions();
 
     // Shared multiplayer state
     private final Object lock = new Object();
@@ -324,13 +303,10 @@ public class QuizServer {
 
             Question question = QUESTIONS.get(questionIndex);
 
-            if (parts[2].equals(question.correctAnswer())) {
-
-                scores.merge(
-                        sender.username,
-                        POINTS_PER_CORRECT,
-                        Integer::sum);
-            }
+            scores.merge(
+                    sender.username,
+                    GameRules.pointsFor(question, parts[2]),
+                    Integer::sum);
 
             sender.send(
                     "ANSWER_ACCEPTED|" + (questionIndex + 1));
@@ -361,15 +337,16 @@ public class QuizServer {
                 "ROUND_RESULT|" + (questionIndex + 1)
                         + "|" + question.correctAnswer());
 
-        broadcastLocked(
-                "SCORES|" + scoresTextLocked());
-
         // Check if this was the last question
         if (questionIndex == QUESTIONS.size() - 1) {
 
+            // finishGameLocked() sends the final SCORES once
             finishGameLocked();
 
         } else {
+
+            broadcastLocked(
+                    "SCORES|" + scoresTextLocked());
 
             int finishedRound = questionIndex + 1;
             int currentSession = sessionId;
@@ -391,7 +368,9 @@ public class QuizServer {
         }
     }
 
-    // Calculate the winner
+    // Calculate the winner and send the final leaderboard once.
+    // Used after the last round and when a disconnect leaves fewer than two
+    // players; in that case the remaining player wins regardless of score.
     private void finishGameLocked() {
 
         roundOpen = false;
@@ -400,16 +379,9 @@ public class QuizServer {
             roundTimer.cancel(false);
         }
 
-        int best = scores.values().stream()
-                .mapToInt(Integer::intValue)
-                .max()
-                .orElse(0);
+        int best = GameRules.topScore(scores);
 
-        String winners = scores.entrySet().stream()
-                .filter(e -> e.getValue() == best)
-                .map(Map.Entry::getKey)
-                .sorted()
-                .collect(Collectors.joining(","));
+        String winners = String.join(",", GameRules.winners(scores));
 
         broadcastLocked(
                 "SCORES|" + scoresTextLocked());
@@ -423,13 +395,7 @@ public class QuizServer {
     // Prepare leaderboard sorted by score
     private String scoresTextLocked() {
 
-        return scores.entrySet().stream()
-                .sorted(
-                    Comparator
-                        .<Map.Entry<String, Integer>>comparingInt(
-                            Map.Entry::getValue)
-                        .reversed()
-                        .thenComparing(Map.Entry::getKey))
+        return GameRules.leaderboard(scores).stream()
                 .map(e -> e.getKey() + ":" + e.getValue())
                 .collect(Collectors.joining(","));
     }
