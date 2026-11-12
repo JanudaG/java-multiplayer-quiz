@@ -337,15 +337,16 @@ public class QuizServer {
                 "ROUND_RESULT|" + (questionIndex + 1)
                         + "|" + question.correctAnswer());
 
-        broadcastLocked(
-                "SCORES|" + scoresTextLocked());
-
         // Check if this was the last question
         if (questionIndex == QUESTIONS.size() - 1) {
 
+            // finishGameLocked() sends the final SCORES once
             finishGameLocked();
 
         } else {
+
+            broadcastLocked(
+                    "SCORES|" + scoresTextLocked());
 
             int finishedRound = questionIndex + 1;
             int currentSession = sessionId;
@@ -367,7 +368,9 @@ public class QuizServer {
         }
     }
 
-    // Calculate the winner
+    // Calculate the winner and send the final leaderboard once.
+    // Used after the last round and when a disconnect leaves fewer than two
+    // players; in that case the remaining player wins regardless of score.
     private void finishGameLocked() {
 
         roundOpen = false;

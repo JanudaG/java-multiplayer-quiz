@@ -3,6 +3,12 @@
 Branch: `feature/question-bank-tests` · Baseline: `main` @ `90a4cf2` (Phase 3 quiz engine)
 JDK: 21.0.12 · Platform: Windows 11 · No build tool or external libraries required.
 
+> **Status update (`integration/full-app-test`):** the server integration steps below have been
+> applied; issues 1 (console error text) and 2 (duplicate `SCORES`) are fixed; issue 3 is confirmed
+> by the team as an intentional rule (the last remaining player wins). See
+> [integration-report.md](integration-report.md) for current results. The rest of this report
+> describes the original branch as submitted.
+
 ## How to run
 
 From the repository root (Windows uses `;` in the classpath, macOS/Linux use `:`):

@@ -25,19 +25,54 @@ The two merged branches only add new files and share none, so no conflicts arose
 
 Member 2 should also apply the `GameController`/`pom.xml` fixes on their own branch, or accept them through this integration.
 
+## Bug fixes and documentation (second integration round)
+
+| File | Owner | Change | Reviewer |
+|---|---|---|---|
+| `src/quiz/QuizClient.java` | Member 1 | **Issue 1 fixed.** `INFO`, `ERROR` and other single-field messages now print everything after the first `\|`, so `ERROR\|Send ANSWER\|round\|A, B, C or D` is shown in full (as is `ERROR\|First message must be JOIN\|username`). A malformed line is now printed raw instead of crashing the listener thread; before, a bare `ERROR` line stopped the client from showing any later message. Output wording and the protocol are unchanged. | **Member 1** |
+| `src/quiz/QuizServer.java` | Member 1 | **Issue 2 fixed.** `closeRoundLocked()` no longer sends `SCORES` after the last round; `finishGameLocked()` sends the final leaderboard once, then `GAME_OVER`. Message order, scores, ties and the disconnect path are unchanged. Comment documents the disconnect winner rule. | **Member 1** |
+| `src/quiz/gui/ui/QuizGuiApp.java` | Member 2 | **Issue 4 fixed** (comment only): run instructions now cover plain `javac` (Git Bash and PowerShell) and Maven, for JDK 21. | **Member 2** |
+| `src/quiz/GameRules.java` | Member 3 | Comment only: documents the disconnect winner rule. | — |
+| `test/quiz/QuizClientConsoleTest.java` | new | Regression test: runs the real `QuizClient` against a scripted fake server and checks its output for every message type, including the Issue 1 message and malformed lines. | Member 1 (FYI) |
+| `test/quiz/QuizServerIntegrationTest.java` | Member 3 | Regression checks: after the final round exactly one `SCORES` then `GAME_OVER` (tie and single-winner games); the disconnect path still sends one final `SCORES` before the remaining player's `GAME_OVER`. | — |
+| `README.md`, `docs/member3-testing-report.md` | shared | README rewritten for the finished project (features, rules, scoring, disconnects, tests, troubleshooting); status note added to the Member 3 report. | All |
+
+**Confirmed team rule (Issue 3, unchanged on purpose):** if a player disconnects during a game
+and only one player remains, the match ends and the remaining player is declared the winner,
+regardless of their current score.
+
+Both fixes were test-first: before the code change, `QuizClientConsoleTest` failed 4 checks
+(truncated error, and the listener died on a bare `ERROR` line) and `QuizServerIntegrationTest`
+failed 2 checks (`SCORES` received twice before `GAME_OVER`). After the change both suites pass.
+
 ## Test results
+
+Latest run: clean rebuild with JDK 21.0.12 (37 source files, 30 test files) after the bug
+fixes, on Windows 11, port 5000 confirmed free before the run and no server left afterwards.
 
 | Suite | Type | Result |
 |---|---|---|
 | `QuestionBankTest` | Automated, plain Java | 30 / 30 passed |
 | `GameRulesTest` | Automated, plain Java | 20 / 20 passed |
 | `QuizServerIntegrationTest` | Automated, real server + raw TCP clients | 59 / 59 passed (14 / 14 scenarios) |
+| `QuizClientConsoleTest` (new) | Automated, real console client + scripted server | 19 / 19 passed |
 | GUI tests (`quiz.gui`, Member 2) | Automated, JUnit 5.13.4 | 389 / 389 passed |
 | `FullAppGuiE2E` | Automated, real server + real Swing windows | 43 / 43 passed (13 / 13 scenarios) |
 
 The 109 Member 3 checks (30 + 20 + 59) still pass with the integrated server.
 Some GUI unit tests print stack traces on purpose ("listener bug (expected in this test)");
 they are not failures.
+
+Fix verification in this run:
+
+- **Issue 1:** the console client printed `[Error] Send ANSWER|round|A, B, C or D` in full, and kept
+  running after malformed lines.
+- **Issue 2:** after the final round each client received exactly `SCORES` then `GAME_OVER`
+  (tie game `SCORES|alice:30,bob:30` → `GAME_OVER|alice,bob|30`; single winner
+  `SCORES|alice:50,dave:0` → `GAME_OVER|alice|50`).
+- **Rules unchanged:** 10 / 0 points, 15 s deadline (measured 15.0 s server-side, 15.1 s in the GUI),
+  host-only start, two-player minimum, tie handling, score reset on replay, and the disconnect rule
+  (`SCORES|alice:10` → `GAME_OVER|alice|10` for the remaining player).
 
 ### Full application (GUI end-to-end)
 
@@ -60,7 +95,8 @@ clicking the real buttons; extra windows test rejected joins.
 | Replay (Play Again only for host; scores reset) | PASS |
 | Disconnect handling (Leave Game mid-game, rejoin afterwards) | PASS |
 
-The console `QuizClient` was also smoke-tested against the integrated server (join, host, start refused with one player).
+The console `QuizClient` was smoke-tested against the integrated server (join, host, start
+refused with one player) and is covered by `QuizClientConsoleTest`.
 
 ### Not tested
 
@@ -71,10 +107,11 @@ The console `QuizClient` was also smoke-tested against the integrated server (jo
 
 ## Known issues
 
-| # | Issue | Area | Owner |
-|---|---|---|---|
-| 1 | The console client shows `[Error] Send ANSWER` instead of the full message, because the server text `ERROR\|Send ANSWER\|round\|A, B, C or D` contains `\|`. The GUI shows it correctly. | `QuizClient` / `QuizServer` | Member 1 |
-| 2 | `SCORES` is sent twice after the final round (`closeRoundLocked` and `finishGameLocked`). Cosmetic. | `QuizServer` | Member 1 |
-| 3 | When the opponent leaves mid-game, the remaining player gets "You win! Congratulations!" after only one or two rounds, and the screen still says "5 questions". Needs a team decision: keep, or show "match ended" instead. | Server rule + GUI | Members 1 and 2 |
-| 4 | `QuizGuiApp` Javadoc says to run from `target/classes` (Maven only); the README now gives the plain `javac` commands. | GUI docs | Member 2 |
-| 5 | `FullAppGuiE2E` and `QuizServerIntegrationTest` need port 5000 free because the server port is fixed. | Tests | — |
+| # | Issue | Status |
+|---|---|---|
+| 1 | Console client truncated `ERROR\|Send ANSWER\|round\|A, B, C or D` to `[Error] Send ANSWER`. | **Fixed** in `QuizClient`; regression test `QuizClientConsoleTest` |
+| 2 | `SCORES` sent twice after the final round. | **Fixed** in `QuizServer`; regression checks in `QuizServerIntegrationTest` |
+| 3 | Remaining player wins when the opponent disconnects mid-game. | **Intended** — confirmed team rule; documented in README and code |
+| 4 | `QuizGuiApp` comment gave Maven-only run instructions. | **Fixed** (comment only) |
+| 5 | `QuizServerIntegrationTest`, `QuizClientConsoleTest` and `FullAppGuiE2E` need port 5000 free because the port is fixed; they exit with status 2 if it is busy. | Open (by design) |
+| 6 | On the game-over screen after a disconnect win, the subtitle still says "5 questions" although fewer rounds were played. | Open, cosmetic (Member 2) |

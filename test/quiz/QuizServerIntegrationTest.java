@@ -192,7 +192,10 @@ public final class QuizServerIntegrationTest {
         check(10, "tie announced with both winners", "GAME_OVER|alice,bob|30",
                 alice.await("GAME_OVER"));
         check(9, "bob receives round 5 result", "ROUND_RESULT|5|A", bob.await("ROUND_RESULT"));
-        check(10, "bob receives same game over", "GAME_OVER|alice,bob|30", bob.await("GAME_OVER"));
+        // Regression: the final leaderboard must be sent exactly once, then GAME_OVER
+        check(10, "final SCORES sent once, then GAME_OVER (tie)",
+                List.of("SCORES|alice:30,bob:30", "GAME_OVER|alice,bob|30"),
+                bob.linesUntil("GAME_OVER"));
 
         // Messages arrive in order, so read GAME_OVER before sending the late answer
         bob.send("ANSWER|5|A");
@@ -214,8 +217,10 @@ public final class QuizServerIntegrationTest {
         check(13, "player list updated", "PLAYERS|alice", alice.await("PLAYERS"));
         check(13, "match ended", "INFO|Match ended: not enough players",
                 alice.await("INFO|Match ended"));
-        check(13, "remaining player declared winner", "GAME_OVER|alice|10",
-                alice.await("GAME_OVER"));
+        // Confirmed rule: the last remaining player wins, after one final SCORES message
+        check(13, "remaining player declared winner after one final SCORES",
+                List.of("SCORES|alice:10", "GAME_OVER|alice|10"),
+                alice.linesUntil("GAME_OVER"));
 
         // ---- Game 3: new player joins after game over, single winner ----
         TestClient dave = TestClient.join("dave");
@@ -231,7 +236,9 @@ public final class QuizServerIntegrationTest {
             dave.send("ANSWER|" + round + "|" + wrong);
             dave.await("ROUND_RESULT|" + round);
         }
-        check(10, "single winner announced", "GAME_OVER|alice|50", dave.await("GAME_OVER"));
+        check(10, "single winner: final SCORES sent once, then GAME_OVER",
+                List.of("SCORES|alice:50,dave:0", "GAME_OVER|alice|50"),
+                dave.linesUntil("GAME_OVER"));
 
         alice.send("QUIT");
         check(13, "host leaves: next player becomes host", "HOST|dave", dave.await("HOST"));
@@ -323,6 +330,7 @@ public final class QuizServerIntegrationTest {
         private final PrintWriter out;
         private final BlockingQueue<String> inbox = new LinkedBlockingQueue<>();
         private final List<String> skipped = new ArrayList<>();
+        private List<String> lastSkipped = new ArrayList<>();
 
         private TestClient(String name) throws IOException {
             this.name = name;
@@ -377,11 +385,20 @@ public final class QuizServerIntegrationTest {
                     return null;
                 }
                 if (line.startsWith(prefix)) {
+                    lastSkipped = new ArrayList<>(skipped);
                     skipped.clear();
                     return line;
                 }
                 skipped.add(line);
             }
+        }
+
+        /** Every message up to and including the next one starting with prefix (exact order). */
+        List<String> linesUntil(String prefix) throws InterruptedException {
+            String match = await(prefix);
+            List<String> lines = new ArrayList<>(lastSkipped);
+            lines.add(match);
+            return lines;
         }
 
         /** True if the server closes this connection within the timeout. */

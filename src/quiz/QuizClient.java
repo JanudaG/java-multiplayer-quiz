@@ -47,95 +47,109 @@ public class QuizClient {
 
                         String[] parts = message.split("\\|", -1);
 
-                        switch (parts[0]) {
+                        // Everything after the message type, kept whole:
+                        // INFO and ERROR text may itself contain '|'
+                        int bar = message.indexOf('|');
+                        String text = bar >= 0
+                                ? message.substring(bar + 1) : "";
 
-                            case "JOINED" ->
-                                System.out.println(
-                                    "Welcome, " + parts[1]);
+                        try {
+                            switch (parts[0]) {
 
-                            case "PLAYERS" ->
-                                System.out.println(
-                                    "Online: " + parts[1]);
+                                case "JOINED" ->
+                                    System.out.println(
+                                        "Welcome, " + text);
 
-                            case "HOST" ->
-                                System.out.println(
-                                    "Host: " + parts[1]);
+                                case "PLAYERS" ->
+                                    System.out.println(
+                                        "Online: " + text);
 
-                            case "INFO" ->
-                                System.out.println(
-                                    "[Info] " + parts[1]);
+                                case "HOST" ->
+                                    System.out.println(
+                                        "Host: " + text);
 
-                            case "GAME_STARTED" ->
-                                System.out.println(
-                                    "Game started: " + parts[1]);
+                                case "INFO" ->
+                                    System.out.println(
+                                        "[Info] " + text);
 
-                            case "QUESTION" -> {
+                                case "GAME_STARTED" ->
+                                    System.out.println(
+                                        "Game started: " + text);
 
-                                activeRound.set(
-                                        Integer.parseInt(parts[1]));
+                                case "QUESTION" -> {
 
-                                System.out.println(
-                                    "\nQUESTION " + parts[1]
-                                    + "/" + parts[2]
-                                    + " (" + parts[3] + " seconds)");
+                                    activeRound.set(
+                                            Integer.parseInt(parts[1]));
 
-                                System.out.println(parts[4]);
+                                    System.out.println(
+                                        "\nQUESTION " + parts[1]
+                                        + "/" + parts[2]
+                                        + " (" + parts[3] + " seconds)");
 
-                                System.out.println(
-                                    "A. " + parts[5]);
+                                    System.out.println(parts[4]);
 
-                                System.out.println(
-                                    "B. " + parts[6]);
+                                    System.out.println(
+                                        "A. " + parts[5]);
 
-                                System.out.println(
-                                    "C. " + parts[7]);
+                                    System.out.println(
+                                        "B. " + parts[6]);
 
-                                System.out.println(
-                                    "D. " + parts[8]);
+                                    System.out.println(
+                                        "C. " + parts[7]);
 
-                                System.out.println(
-                                    "Type A, B, C, or D:");
+                                    System.out.println(
+                                        "D. " + parts[8]);
+
+                                    System.out.println(
+                                        "Type A, B, C, or D:");
+                                }
+
+                                case "ANSWER_ACCEPTED" ->
+                                    System.out.println(
+                                        "Answer recorded for round "
+                                        + text);
+
+                                case "ROUND_RESULT" -> {
+
+                                    activeRound.set(0);
+
+                                    System.out.println(
+                                        "Round " + parts[1]
+                                        + " finished. Correct answer: "
+                                        + parts[2]);
+                                }
+
+                                case "SCORES" ->
+                                    System.out.println(
+                                        "Leaderboard: " + text);
+
+                                case "GAME_OVER" -> {
+
+                                    activeRound.set(0);
+
+                                    System.out.println(
+                                        "GAME OVER! Winner(s): "
+                                        + parts[1]
+                                        + " | Points: " + parts[2]);
+
+                                    System.out.println(
+                                        "Host can type /start to play again.");
+                                }
+
+                                case "ERROR" ->
+                                    System.out.println(
+                                        "[Error] " + text);
+
+                                default ->
+                                    System.out.println(
+                                        "Server: " + message);
                             }
 
-                            case "ANSWER_ACCEPTED" ->
-                                System.out.println(
-                                    "Answer recorded for round "
-                                    + parts[1]);
+                        } catch (RuntimeException e) {
 
-                            case "ROUND_RESULT" -> {
-
-                                activeRound.set(0);
-
-                                System.out.println(
-                                    "Round " + parts[1]
-                                    + " finished. Correct answer: "
-                                    + parts[2]);
-                            }
-
-                            case "SCORES" ->
-                                System.out.println(
-                                    "Leaderboard: " + parts[1]);
-
-                            case "GAME_OVER" -> {
-
-                                activeRound.set(0);
-
-                                System.out.println(
-                                    "GAME OVER! Winner(s): "
-                                    + parts[1]
-                                    + " | Points: " + parts[2]);
-
-                                System.out.println(
-                                    "Host can type /start to play again.");
-                            }
-
-                            case "ERROR" ->
-                                System.out.println(
-                                    "[Error] " + parts[1]);
-
-                            default ->
-                                System.out.println(
-                                    "Server: " + message);
+                            // A malformed line must not stop the listener
+                            System.out.println(
+                                "Server: " + message);
                         }
                     }
 

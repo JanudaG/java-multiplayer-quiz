@@ -11,6 +11,10 @@ import java.util.Objects;
  *
  * The server remains responsible for game state, rounds and deadlines;
  * these methods only calculate points, winners and leaderboard order.
+ *
+ * Team rule applied by QuizServer: if a player disconnects during a game and
+ * only one player remains, the match ends and that player is the winner,
+ * regardless of score (winners() of a one-player map returns that player).
  */
 public final class GameRules {
 

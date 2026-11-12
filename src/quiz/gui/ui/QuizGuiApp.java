@@ -20,7 +20,16 @@ import quiz.gui.theme.ThemeManager;
  * No network connection is made at startup: the {@link GameController} only connects
  * when a screen asks it to.
  *
- * <p>Run with: {@code java -cp target/classes quiz.gui.ui.QuizGuiApp}</p>
+ * <p>Build and run with JDK 21 from the repository root (start {@code quiz.QuizServer} first):</p>
+ * <ul>
+ *   <li>Plain javac (Git Bash / macOS / Linux):
+ *       {@code javac -encoding UTF-8 -d out/main $(find src -name '*.java')}, then
+ *       {@code java -cp out/main quiz.gui.ui.QuizGuiApp}</li>
+ *   <li>Plain javac (PowerShell):
+ *       {@code javac -encoding UTF-8 -d out/main (Get-ChildItem -Recurse -Filter *.java src).FullName},
+ *       then {@code java -cp out/main quiz.gui.ui.QuizGuiApp}</li>
+ *   <li>Maven: {@code mvn compile}, then {@code java -cp target/classes quiz.gui.ui.QuizGuiApp}</li>
+ * </ul>
  */
 public final class QuizGuiApp {
 
