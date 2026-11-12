@@ -7,6 +7,20 @@ timed multiple-choice questions at the same time, and compete on a live leaderbo
 The server is the single authority for the game: it keeps the players, scores, rounds and
 deadlines. Clients only display what the server sends and send the player's actions.
 
+## Quick Start
+
+New to the project or running it on Windows? Follow the step-by-step guide
+**[docs/RUN_INSTRUCTIONS.md](docs/RUN_INSTRUCTIONS.md)**. It covers installing JDK 21, compiling, starting the
+server and two players, playing, troubleshooting, and playing on two computers.
+
+In short (JDK 21, PowerShell, from the repository root):
+
+```powershell
+javac -encoding UTF-8 -d out/main (Get-ChildItem -Recurse -Filter *.java src).FullName
+java -cp out/main quiz.QuizServer          # terminal 1
+java -cp out/main quiz.gui.ui.QuizGuiApp   # terminals 2 and 3: one per player
+```
+
 ## Main features
 
 - Lobby with a host: the first player to join is the host and is the only one who can start a game
