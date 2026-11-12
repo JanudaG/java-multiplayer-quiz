@@ -268,7 +268,7 @@ public final class GameController {
                 startRequested = false;
                 state.onError(m.text());
             }
-            case ServerMessage.GameStarted _ -> {
+            case ServerMessage.GameStarted m -> {
                 startRequested = false;
                 state.onGameStarted();
             }

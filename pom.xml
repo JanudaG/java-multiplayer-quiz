@@ -13,7 +13,7 @@
     <description>Real-time multiplayer quiz game using Java TCP sockets.</description>
 
     <properties>
-        <maven.compiler.release>27</maven.compiler.release>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
